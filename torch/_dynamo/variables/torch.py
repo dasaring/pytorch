@@ -1018,6 +1018,21 @@ class TorchInGraphFunctionVariable(BaseTorchVariable):
             *args: VariableTracker,
             **kwargs: VariableTracker,
         ) -> VariableTracker:
+            if len(args) == 2 and not kwargs:
+                variable, new_grad = args
+                if not variable.is_tensor():
+                    raise AssertionError(
+                        "Expected first argument to accumulate_grad_ to be a tensor"
+                    )
+                variable_grad = variable.var_getattr(tx, "grad")
+                updated_grad = tx.inline_user_function_return(
+                    VariableTracker.build(tx, polyfills.accumulate_grad),
+                    (variable, variable_grad, new_grad),
+                    kwargs,
+                )
+                updated_grad = updated_grad.clone(source=None)
+                tx.output.side_effects.store_attr(variable, "grad", updated_grad)
+                return ConstantVariable.create(None)
             return tx.inline_user_function_return(
                 VariableTracker.build(tx, polyfills.accumulate_grad), args, kwargs
             )
