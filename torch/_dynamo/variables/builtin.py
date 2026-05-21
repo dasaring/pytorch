@@ -1480,15 +1480,6 @@ class BuiltinVariable(BaseBuiltinVariable):
 
                 return wrap_fx_proxy_cls(variables.NumpyNdarrayVariable, tx, proxy)
 
-            if (
-                fn in (operator.eq, operator.ne)
-                and len(args) == 2
-                and args[0].is_tensor()
-            ):
-                # Dynamo expects `__eq__` / `__ne__` strings while operator.{eq,ne}
-                # provides call_function dispatch first.
-                method_name = "__eq__" if fn is operator.eq else "__ne__"
-                return args[0].call_method(tx, method_name, list(args[1:]), kwargs)
             proxy = tx.output.create_proxy(
                 "call_function",
                 fn,

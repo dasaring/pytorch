@@ -321,21 +321,22 @@ class BaseListVariable(VariableTracker):
         CPython operates on the internal C array directly, so we compare
         VT items without going through a polyfill.
         """
-        from .object_protocol import generic_richcompare
+        from .object_protocol import generic_richcompare, generic_richcompare_bool
         from .tensor import SymNodeVariable
 
-        if not isinstance(other, BaseListVariable):
-            return ConstantVariable.create(NotImplemented)
         try:
-            self_base = list if issubclass(self.python_type(), list) else tuple
-            other_base = list if issubclass(other.python_type(), list) else tuple
-            if self_base is not other_base:
-                return ConstantVariable.create(NotImplemented)
+            other_type = other.python_type()
         except NotImplementedError:
             return ConstantVariable.create(NotImplemented)
+        if issubclass(self.python_type(), list):
+            if not issubclass(other_type, list):
+                return ConstantVariable.create(NotImplemented)
+        else:
+            if not issubclass(other_type, tuple):
+                return ConstantVariable.create(NotImplemented)
 
         left = self.items
-        right = other.items
+        right = other.items  # pyrefly: ignore[missing-attribute]
 
         cmp_op = cmp_name_to_op_mapping[op]
 
@@ -346,7 +347,9 @@ class BaseListVariable(VariableTracker):
 
         sym_eq_acc = None
         for a, b in zip(left, right):
-            eq_result = generic_richcompare(tx, a, b, "__eq__")
+            # CPython uses PyObject_RichCompareBool per element, which has
+            # an identity shortcut before the full do_richcompare dispatch.
+            eq_result = generic_richcompare_bool(tx, a, b, "__eq__")
             if eq_result.is_python_constant():
                 if not eq_result.as_python_constant():
                     if cmp_op in (operator.eq, operator.ne):
