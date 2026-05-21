@@ -2887,6 +2887,11 @@ class OutputGraph(OutputGraphCommon):
                     # replace compiled_fn with the real forward method
                     compiled_fn = lazy_gm.forward
 
+            if not self.export:
+                # Backends have already consumed the graph, so Dynamo tracing
+                # constants no longer need to keep real device tensors alive.
+                old_fake_mode.fake_tensor_converter.clear_non_cpu_constants()
+
             if self.package is not None:
                 self.package.add_backend_id(name, compiled_fn)
 
