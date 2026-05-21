@@ -1,9 +1,11 @@
 # Owner(s): ["module: inductor"]
+import contextlib
 import importlib
 import os
 import sys
 
 import torch
+from torch._inductor import config
 from torch._inductor.compile_fx import compile_fx
 from torch._inductor.test_case import TestCase
 from torch.testing._internal.common_utils import (
@@ -465,6 +467,26 @@ DynamicShapesCodegenCommonTemplate = make_dynamic_cls(
 )
 
 
+class DynamicShapesCodegenTestCase(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._triton_assert_stack = contextlib.ExitStack()
+        cls._triton_assert_stack.enter_context(
+            config.patch(
+                {
+                    "test_configs.runtime_triton_dtype_assert": True,
+                    "test_configs.runtime_triton_shape_assert": True,
+                }
+            )
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._triton_assert_stack.close()
+        super().tearDownClass()
+
+
 if HAS_CPU:
 
     class DynamicShapesCodegenCpuTests(TestCase):
@@ -491,7 +513,7 @@ if HAS_CPU:
 
 if HAS_GPU and not TEST_WITH_ASAN:
 
-    class DynamicShapesCodegenGPUTests(TestCase):
+    class DynamicShapesCodegenGPUTests(DynamicShapesCodegenTestCase):
         maxDiff = None
         device = GPU_TYPE
 
