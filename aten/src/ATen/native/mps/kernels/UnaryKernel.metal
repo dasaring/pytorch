@@ -29,11 +29,15 @@ inline T exp_(const T x) {
 template <typename T, enable_if_t<is_complex_v<T>, bool> = true>
 inline T exp_(const T x) {
   auto ex = precise::exp(x.x);
+  
   // y == 0: avoid inf*0 / nan*0 = NaN in imag (matches C99 cexp).
   if (x.y == 0) {
     return T(ex, 0);
   }
-  return T(ex * precise::cos(x.y), ex * precise::sin(x.y));
+  
+  decltype(x.y) s, c;
+  precise::sincos(x.y, s, c);
+  return T(ex * c, ex * s);
 }
 
 struct exp_functor {
