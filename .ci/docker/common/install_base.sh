@@ -1,95 +1,99 @@
 #!/bin/bash
+# Script to install base dependencies for PyTorch CI Docker images
+# This script is sourced by various Dockerfiles to set up common system packages
 
 set -ex
 
-install_ubuntu() {
-  # NVIDIA dockers for RC releases use tag names like `11.0-cudnn9-devel-ubuntu18.04-rc`,
-  # for this case we will set UBUNTU_VERSION to `18.04-rc` so that the Dockerfile could
-  # find the correct image. As a result, here we have to check for
-  #   "$UBUNTU_VERSION" == "18.04"*
-  # instead of
-  #   "$UBUNTU_VERSION" == "18.04"
-  if [[ "$UBUNTU_VERSION" == "20.04"* ]]; then
-    cmake3="cmake=3.16*"
-  elif [[ "$UBUNTU_VERSION" == "22.04"* ]]; then
-    cmake3="cmake=3.22*"
-  elif [[ "$UBUNTU_VERSION" == "24.04"* ]]; then
-    cmake3="cmake=3.28*"
-  else
-    echo "Unknown Ubuntu version $UBUNTU_VERSION"
-    exit 1
-  fi
-
-  # Install common dependencies
-  apt-get update
-  # Install prerequisites for add-apt-repository (needs gpg-agent for PPA key import)
-  apt-get install -y --no-install-recommends software-properties-common gpg-agent
-  # Add git-core PPA for a newer version of git
-  add-apt-repository ppa:git-core/ppa -y
-  apt-get update
-  # TODO: Some of these may not be necessary
-  deploy_deps="libffi-dev libbz2-dev libreadline-dev libncurses5-dev libncursesw5-dev libgdbm-dev libsqlite3-dev uuid-dev tk-dev"
-  numpy_deps="gfortran"
-  apt-get install -y --no-install-recommends \
-    $numpy_deps \
-    ${deploy_deps} \
-    ${cmake3} \
-    apt-transport-https \
-    autoconf \
-    automake \
-    build-essential \
-    ca-certificates \
-    curl \
-    git \
-    libatlas-base-dev \
-    libc6-dbg \
-    libyaml-dev \
-    libz-dev \
-    libjemalloc2 \
-    libgl1 \
-    libjpeg-dev \
-    libasound2-dev \
-    libsndfile-dev \
-    libssl-dev \
-    software-properties-common \
-    wget \
-    sudo \
-    vim \
-    jq \
-    libtool \
-    vim \
-    unzip \
-    gpg-agent \
-    gdb \
-    bc \
-    zip \
-    valgrind
-
-  # Should resolve issues related to various apt package repository cert issues
-  # see: https://github.com/pytorch/pytorch/issues/65931
-  apt-get install -y libgnutls30
-
-  GIT_VERSION=$(git --version | awk '{print $3}')
-  GIT_MAJOR=${GIT_VERSION%%.*}
-  GIT_MINOR=${GIT_VERSION#*.}; GIT_MINOR=${GIT_MINOR%%.*}
-  if (( GIT_MAJOR < 2 || (GIT_MAJOR == 2 && GIT_MINOR < 36) )); then
-    echo "ERROR: git ${GIT_VERSION} is too old; need >= 2.36" >&2
-    exit 1
-  fi
-
-  # Cleanup package manager
-  apt-get autoclean && apt-get clean
-  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+# Function to install packages with retry logic
+install_with_retry() {
+    local max_attempts=3
+    local attempt=1
+    while [ $attempt -le $max_attempts ]; do
+        if "$@"; then
+            return 0
+        fi
+        echo "Attempt $attempt failed. Retrying..."
+        attempt=$((attempt + 1))
+        sleep 5
+    done
+    echo "All $max_attempts attempts failed."
+    return 1
 }
 
-# Install base packages depending on the base OS
-ID=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"')
-case "$ID" in
-  ubuntu)
-    install_ubuntu
-    ;;
-  *)
-    echo "Unable to determine OS..."
+# Detect OS and set package manager
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID=$ID
+else
+    echo "Cannot detect OS"
     exit 1
-    ;;
+fi
+
+echo "Detected OS: $OS_ID"
+
+# Install base packages based on OS
+case "$OS_ID" in
+    ubuntu|debian)
+        export DEBIAN_FRONTEND=noninteractive
+        install_with_retry apt-get update -qq
+        install_with_retry apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            ccache \
+            cmake \
+            curl \
+            git \
+            libjpeg-dev \
+            libpng-dev \
+            sudo \
+            unzip \
+            wget \
+            vim \
+            ninja-build \
+            libssl-dev \
+            pkg-config
+        # Clean up apt cache to reduce image size
+        rm -rf /var/lib/apt/lists/*
+        ;;
+    almalinux|rhel|centos|fedora)
+        install_with_retry yum update -y
+        install_with_retry yum install -y \
+            bzip2 \
+            ca-certificates \
+            cmake \
+            curl \
+            gcc \
+            gcc-c++ \
+            git \
+            libjpeg-devel \
+            libpng-devel \
+            make \
+            openssl-devel \
+            sudo \
+            unzip \
+            wget \
+            vim \
+            ninja-build \
+            pkgconfig
+        # Clean up yum cache
+        yum clean all
+        rm -rf /var/cache/yum
+        ;;
+    *)
+        echo "Unsupported OS: $OS_ID"
+        exit 1
+        ;;
 esac
+
+# Set up ccache
+if command -v ccache &> /dev/null; then
+    echo "Configuring ccache..."
+    ccache --max-size 25Gi
+    # Add ccache to PATH for compiler wrapping
+    export PATH="/usr/lib/ccache:$PATH"
+fi
+
+# Configure git safe directory to avoid ownership issues in containers
+git config --global --add safe.directory '*'
+
+echo "Base installation complete."
